@@ -6,7 +6,7 @@ data warehouse with support for append and replace operations.
 """
 
 import pandas as pd
-from sqlalchemy import Engine
+from sqlalchemy.engine import Engine
 import logging
 
 logger = logging.getLogger(__name__)
