@@ -20,8 +20,10 @@ from pathlib import Path
 
 # Add project root to Python path so Airflow can import our modules
 # This allows the DAG to access functions from src/ and scripts/
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# In Airflow container, src/ and scripts/ are mounted at /opt/airflow/
+dag_dir = Path(__file__).parent  # /opt/airflow/dags
+airflow_home = dag_dir.parent     # /opt/airflow
+sys.path.insert(0, str(airflow_home))
 
 # Import the functions that will be called by Airflow tasks
 from src.main import run_etl_pipeline
