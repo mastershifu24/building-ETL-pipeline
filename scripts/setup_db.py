@@ -45,7 +45,7 @@ def main():
     logger.info(f"POSTGRES_DB: {os.getenv('POSTGRES_DB', 'NOT SET')}")
     password_set = os.getenv('POSTGRES_PASSWORD')
     logger.info(f"POSTGRES_PASSWORD: {'SET (length: ' + str(len(password_set)) + ')' if password_set else 'NOT SET'}")
-    logger.info(f"POSTGRES_PASSWORD value: {password_set}")
+    # Don't log actual password value for security
     
     try:
         engine = create_db_engine()
