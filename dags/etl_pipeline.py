@@ -23,6 +23,7 @@ from pathlib import Path
 # In Airflow container, src/ and scripts/ are mounted at /opt/airflow/
 dag_dir = Path(__file__).parent  # /opt/airflow/dags
 airflow_home = dag_dir.parent     # /opt/airflow
+# Add /opt/airflow to Python path so we can import src and scripts
 sys.path.insert(0, str(airflow_home))
 
 # Import the functions that will be called by Airflow tasks
