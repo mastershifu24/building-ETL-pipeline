@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+asvenv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment variables
+.env
+.env.local
+
+# Data files (keep structure, ignore actual data)
+data/raw/*
+data/processed/*
+data/warehouse/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/warehouse/.gitkeep
+
+# Logs
+*.log
+logs/
+monitoring/logs/*
+
+# Airflow
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation (generated/build artifacts only)
+docs/_build/
+docs/build/
+docs/.doctrees/
+*.html
+*.pdf
+site/
+_site/
+.mkdocs/
+
+# Keep other technical .md files in git (architecture, getting_started, etc.)
