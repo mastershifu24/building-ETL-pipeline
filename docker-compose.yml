@@ -50,7 +50,11 @@ services:
       - ./scripts:/opt/airflow/scripts
     ports:
       - "8080:8080"
-    command: webserver
+    command: >
+      bash -c "
+        rm -f /opt/airflow/airflow-webserver.pid &&
+        airflow webserver
+      "
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 30s
