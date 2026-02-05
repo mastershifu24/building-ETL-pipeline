@@ -16,20 +16,22 @@ def get_db_connection_string() -> str:
     Construct database connection string from environment variables.
     
     Reads database configuration from environment variables with defaults
-    for local development.
+    for local development. In Docker, POSTGRES_HOST should be 'postgres' (service name).
     
     Returns:
         SQLAlchemy PostgreSQL connection string in format:
         postgresql://user:password@host:port/database
     """
+    # Check if running in Docker (Airflow sets POSTGRES_HOST=postgres)
+    # Otherwise use localhost for local development
     host = os.getenv('POSTGRES_HOST', 'localhost')
     port = os.getenv('POSTGRES_PORT', '5432')
     database = os.getenv('POSTGRES_DB', 'saas_analytics')
     user = os.getenv('POSTGRES_USER', 'postgres')
     password = os.getenv('POSTGRES_PASSWORD', 'postgres')
     
-    # Debug: log connection details (without password)
-    logger.debug(f"Connecting to database: {user}@{host}:{port}/{database}")
+    # Log connection details (without password) for debugging
+    logger.info(f"Connecting to database: {user}@{host}:{port}/{database}")
     
     return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 

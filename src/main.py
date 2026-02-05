@@ -15,7 +15,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Load environment variables from project root
-load_dotenv(dotenv_path=project_root / '.env')
+# Don't override existing env vars (Docker sets POSTGRES_HOST=postgres)
+load_dotenv(dotenv_path=project_root / '.env', override=False)
 
 from src.utils.logger import setup_logger
 from src.utils.database import create_db_engine
