@@ -60,17 +60,23 @@ dag = DAG(
 check_data = BashOperator(
     task_id='check_data_availability',
     bash_command='''
-    # Use environment variable or default to data/raw
-    DATA_PATH="${DATA_RAW_PATH:-data/raw}"
+    # Data is mounted at /opt/airflow/data in the container
+    DATA_PATH="/opt/airflow/data/raw"
+    echo "Checking for data files in: $DATA_PATH"
+    ls -la "$DATA_PATH" || echo "Directory does not exist"
     # Check that all four required files exist
     # If any file is missing, exit with code 1 (failure)
-    test -f "$DATA_PATH/user_events.json" && \
-    test -f "$DATA_PATH/subscriptions.json" && \
-    test -f "$DATA_PATH/transactions.json" && \
-    test -f "$DATA_PATH/user_profiles.json" || exit 1
-    echo "All source data files found"
+    if [ -f "$DATA_PATH/user_events.json" ] && \
+       [ -f "$DATA_PATH/subscriptions.json" ] && \
+       [ -f "$DATA_PATH/transactions.json" ] && \
+       [ -f "$DATA_PATH/user_profiles.json" ]; then
+        echo "All source data files found"
+        exit 0
+    else
+        echo "Missing required data files"
+        exit 1
+    fi
     ''',
-    env={'DATA_RAW_PATH': '{{ var.value.get("DATA_RAW_PATH", "data/raw") }}'},
     dag=dag,
 )
 
