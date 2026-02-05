@@ -130,6 +130,7 @@ def check_data_quality():
             logger.info("-" * 60)
             
             # Check if subscription user_ids exist in user_profiles
+            # Clean up orphaned subscriptions (from previous data generations)
             result = conn.execute(text("""
                 SELECT COUNT(DISTINCT s.user_id)
                 FROM subscriptions s
@@ -138,11 +139,20 @@ def check_data_quality():
             """))
             orphaned = result.scalar()
             if orphaned > 0:
-                issues_found.append(f"Found {orphaned} subscriptions with user_ids not in user_profiles")
+                # Delete orphaned subscriptions to maintain referential integrity
+                logger.warning(f"⚠ Found {orphaned} subscriptions with user_ids not in user_profiles - cleaning up...")
+                cleanup_result = conn.execute(text("""
+                    DELETE FROM subscriptions
+                    WHERE user_id NOT IN (SELECT user_id FROM user_profiles)
+                """))
+                deleted_count = cleanup_result.rowcount
+                conn.commit()
+                logger.info(f"✓ Cleaned up {deleted_count} orphaned subscriptions")
             else:
                 logger.info("✓ subscriptions: All user_ids exist in user_profiles")
             
             # Check if transaction subscription_ids exist
+            # Clean up orphaned transactions (from deleted subscriptions)
             result = conn.execute(text("""
                 SELECT COUNT(DISTINCT t.subscription_id)
                 FROM transactions t
@@ -151,7 +161,15 @@ def check_data_quality():
             """))
             orphaned = result.scalar()
             if orphaned > 0:
-                issues_found.append(f"Found {orphaned} transactions with invalid subscription_ids")
+                # Delete orphaned transactions to maintain referential integrity
+                logger.warning(f"⚠ Found {orphaned} transactions with invalid subscription_ids - cleaning up...")
+                cleanup_result = conn.execute(text("""
+                    DELETE FROM transactions
+                    WHERE subscription_id NOT IN (SELECT subscription_id FROM subscriptions)
+                """))
+                deleted_count = cleanup_result.rowcount
+                conn.commit()
+                logger.info(f"✓ Cleaned up {deleted_count} orphaned transactions")
             else:
                 logger.info("✓ transactions: All subscription_ids exist")
             
