@@ -64,5 +64,5 @@ docs/.doctrees/
 site/
 _site/
 .mkdocs/
-
+exercises/python_sql.py
 # Keep other technical .md files in git (architecture, getting_started, etc.)
