@@ -94,27 +94,60 @@ class Transaction:
 
 
 @dataclass
+class Account:
+    """
+    Schema for B2B account (company) data.
+    
+    In B2B SaaS, the account is the paying entity (company),
+    while users are people within that company.
+    """
+    account_id: str
+    company_name: str
+    industry: str
+    company_size: str  # 1-10, 11-50, 51-200, 201-1000, 1000+
+    country: str
+    signup_date: datetime
+    status: str  # active, churned, trial
+    
+    def to_dict(self) -> dict:
+        return {
+            'account_id': self.account_id,
+            'company_name': self.company_name,
+            'industry': self.industry,
+            'company_size': self.company_size,
+            'country': self.country,
+            'signup_date': self.signup_date.isoformat(),
+            'status': self.status
+        }
+
+
+@dataclass
 class UserProfile:
     """
     Schema for user profile data.
     
     Represents user demographic and account information.
+    In B2B, each user belongs to an account (company).
     """
     user_id: str
+    account_id: str  # Links user to their company
     email: str
     created_at: datetime
     signup_source: str  # Values: organic, paid, referral
     country: str
+    role: Optional[str] = None  # admin, member, viewer
     company_size: Optional[str] = None
     industry: Optional[str] = None
     
     def to_dict(self) -> dict:
         return {
             'user_id': self.user_id,
+            'account_id': self.account_id,
             'email': self.email,
             'created_at': self.created_at.isoformat(),
             'signup_source': self.signup_source,
             'country': self.country,
+            'role': self.role,
             'company_size': self.company_size,
             'industry': self.industry
         }
@@ -122,6 +155,21 @@ class UserProfile:
 
 # Warehouse table schemas (for PostgreSQL)
 WAREHOUSE_SCHEMAS = {
+    'accounts': """
+        CREATE TABLE IF NOT EXISTS accounts (
+            account_id VARCHAR(255) PRIMARY KEY,
+            company_name VARCHAR(255) NOT NULL,
+            industry VARCHAR(100),
+            company_size VARCHAR(50),
+            country VARCHAR(100) NOT NULL,
+            signup_date TIMESTAMP NOT NULL,
+            status VARCHAR(50) NOT NULL,
+            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
+        CREATE INDEX IF NOT EXISTS idx_accounts_country ON accounts(country);
+    """,
+    
     'user_events': """
         CREATE TABLE IF NOT EXISTS user_events (
             event_id VARCHAR(255) PRIMARY KEY,
@@ -177,14 +225,17 @@ WAREHOUSE_SCHEMAS = {
     'user_profiles': """
         CREATE TABLE IF NOT EXISTS user_profiles (
             user_id VARCHAR(255) PRIMARY KEY,
+            account_id VARCHAR(255),
             email VARCHAR(255) NOT NULL,
             created_at TIMESTAMP NOT NULL,
             signup_source VARCHAR(50) NOT NULL,
             country VARCHAR(100) NOT NULL,
+            role VARCHAR(50),
             company_size VARCHAR(50),
             industry VARCHAR(100),
             ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        CREATE INDEX IF NOT EXISTS idx_user_profiles_account_id ON user_profiles(account_id);
         CREATE INDEX IF NOT EXISTS idx_user_profiles_country ON user_profiles(country);
         CREATE INDEX IF NOT EXISTS idx_user_profiles_signup_source ON user_profiles(signup_source);
     """

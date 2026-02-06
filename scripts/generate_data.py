@@ -21,30 +21,76 @@ Faker.seed(42)
 random.seed(42)
 
 
-def generate_user_profiles(num_users: int = 1000) -> pd.DataFrame:
+def generate_accounts(num_accounts: int = 50) -> pd.DataFrame:
     """
-    Generate synthetic user profile data.
+    Generate synthetic B2B account (company) data.
+    
+    In B2B SaaS, accounts are the paying entities (companies).
+    Each account can have multiple users.
     
     Args:
-        num_users: Number of user profiles to generate
+        num_accounts: Number of company accounts to generate
+        
+    Returns:
+        DataFrame containing account records
+    """
+    print(f"Generating {num_accounts} B2B accounts...")
+    
+    accounts = []
+    for _ in range(num_accounts):
+        signup_date = fake.date_time_between(start_date='-2y', end_date='now')
+        accounts.append({
+            'account_id': str(uuid.uuid4()),
+            'company_name': fake.company(),
+            'industry': random.choice(['Technology', 'Finance', 'Healthcare', 'Retail', 'Education', 'Manufacturing']),
+            'company_size': random.choice(['1-10', '11-50', '51-200', '201-1000', '1000+']),
+            'country': fake.country(),
+            'signup_date': signup_date.isoformat(),
+            'status': random.choices(['active', 'churned', 'trial'], weights=[0.7, 0.15, 0.15])[0]
+        })
+    
+    return pd.DataFrame(accounts)
+
+
+def generate_user_profiles(accounts: pd.DataFrame, users_per_account: tuple = (1, 5)) -> pd.DataFrame:
+    """
+    Generate synthetic user profile data linked to accounts.
+    
+    In B2B SaaS, users belong to accounts (companies).
+    Each account has 1-5 users by default.
+    
+    Args:
+        accounts: DataFrame containing account data
+        users_per_account: Tuple of (min, max) users per account
         
     Returns:
         DataFrame containing user profile records
     """
-    print(f"Generating {num_users} user profiles...")
+    print(f"Generating user profiles for {len(accounts)} accounts...")
     
     profiles = []
-    for _ in range(num_users):
-        profiles.append({
-            'user_id': str(uuid.uuid4()),
-            'email': fake.email(),
-            'created_at': fake.date_time_between(start_date='-2y', end_date='now').isoformat(),
-            'signup_source': random.choice(['organic', 'paid', 'referral']),
-            'country': fake.country(),
-            'company_size': random.choice(['1-10', '11-50', '51-200', '201-1000', '1000+', None]),
-            'industry': random.choice(['Technology', 'Finance', 'Healthcare', 'Retail', 'Education', None])
-        })
+    for _, account in accounts.iterrows():
+        num_users = random.randint(users_per_account[0], users_per_account[1])
+        account_created = datetime.fromisoformat(account['signup_date'])
+        
+        for i in range(num_users):
+            # First user is admin, rest are members
+            role = 'admin' if i == 0 else random.choice(['member', 'viewer'])
+            user_created = account_created + timedelta(days=random.randint(0, 30))
+            
+            profiles.append({
+                'user_id': str(uuid.uuid4()),
+                'account_id': account['account_id'],
+                'email': fake.email(),
+                'created_at': user_created.isoformat(),
+                'signup_source': random.choice(['organic', 'paid', 'referral']),
+                'country': account['country'],  # Users inherit account country
+                'role': role,
+                'company_size': account['company_size'],
+                'industry': account['industry']
+            })
     
+    print(f"Generated {len(profiles)} user profiles")
     return pd.DataFrame(profiles)
 
 
@@ -180,11 +226,16 @@ def main():
     """
     Generate all synthetic data files for pipeline testing.
     
-    Creates user profiles, subscriptions, transactions, and user events
-    and saves them as JSON files in the data/raw directory.
+    Creates B2B accounts, user profiles, subscriptions, transactions, 
+    and user events, then saves them as JSON files in data/raw.
+    
+    B2B Model:
+    - Accounts = Companies (the paying entity)
+    - Users = People within each company
+    - Subscriptions = Account-level, not user-level
     """
     print("=" * 60)
-    print("Generating Synthetic SaaS Company Data")
+    print("Generating Synthetic B2B SaaS Company Data")
     print("=" * 60)
     
     # Create data directory (relative to project root)
@@ -192,14 +243,16 @@ def main():
     data_dir = project_root / 'data' / 'raw'
     data_dir.mkdir(parents=True, exist_ok=True)
     
-    # Generate data
-    user_profiles = generate_user_profiles(num_users=1000)
+    # Generate data - B2B style (accounts first, then users within accounts)
+    accounts = generate_accounts(num_accounts=50)
+    user_profiles = generate_user_profiles(accounts, users_per_account=(1, 5))
     subscriptions = generate_subscriptions(user_profiles)
     transactions = generate_transactions(subscriptions)
     user_events = generate_user_events(user_profiles, num_events=10000)
     
     # Save to JSON files
     print("\nSaving data files...")
+    accounts.to_json(data_dir / 'accounts.json', orient='records', date_format='iso')
     user_profiles.to_json(data_dir / 'user_profiles.json', orient='records', date_format='iso')
     subscriptions.to_json(data_dir / 'subscriptions.json', orient='records', date_format='iso')
     transactions.to_json(data_dir / 'transactions.json', orient='records', date_format='iso')
@@ -207,10 +260,11 @@ def main():
     
     print(f"\nData generation complete.")
     print(f"\nGenerated files:")
-    print(f"  - {data_dir / 'user_profiles.json'}: {len(user_profiles)} records")
-    print(f"  - {data_dir / 'subscriptions.json'}: {len(subscriptions)} records")
-    print(f"  - {data_dir / 'transactions.json'}: {len(transactions)} records")
-    print(f"  - {data_dir / 'user_events.json'}: {len(user_events)} records")
+    print(f"  - {data_dir / 'accounts.json'}: {len(accounts)} B2B accounts")
+    print(f"  - {data_dir / 'user_profiles.json'}: {len(user_profiles)} users")
+    print(f"  - {data_dir / 'subscriptions.json'}: {len(subscriptions)} subscriptions")
+    print(f"  - {data_dir / 'transactions.json'}: {len(transactions)} transactions")
+    print(f"  - {data_dir / 'user_events.json'}: {len(user_events)} events")
 
 
 if __name__ == '__main__':
