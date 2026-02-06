@@ -1,6 +1,6 @@
 # Production-Style Analytics Pipeline
 
-A production-ready ETL pipeline for a fictional SaaS company, implementing modern data engineering practices.
+A production-ready ETL pipeline for any SaaS company, implementing modern data engineering practices.
 
 ## Project Overview
 
