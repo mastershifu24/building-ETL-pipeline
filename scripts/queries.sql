@@ -33,8 +33,6 @@ FROM (
     SELECT 'subscriptions', ingested_at FROM subscriptions
     UNION ALL
     SELECT 'transactions', ingested_at FROM transactions
-    UNION ALL
-    SELECT 'user_profiles', ingested_at FROM user_profiles
 ) combined
 GROUP BY table_name
 ORDER BY last_ingested DESC;
