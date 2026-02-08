@@ -1,23 +1,24 @@
 """
 Data quality check script.
 
-Validates data warehouse integrity, record counts, and data consistency.
-Performs comprehensive checks including null values, duplicates, and referential integrity.
+Validates data warehouse integrity using the DataQualityChecker framework.
+Performs comprehensive checks including record counts, null values, 
+duplicates, referential integrity, and data freshness.
 """
 
 import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
-from sqlalchemy import text
 from src.utils.database import create_db_engine
 from src.utils.logger import setup_logger
+from src.data_quality import DataQualityChecker
 
 # Load environment variables from project root
-project_root = Path(__file__).parent.parent
 load_dotenv(dotenv_path=project_root / '.env')
 
 logger = setup_logger(name="data_quality")
@@ -27,12 +28,13 @@ def check_data_quality():
     """
     Perform comprehensive data quality checks on warehouse tables.
     
-    Validates:
+    Uses the DataQualityChecker framework to validate:
     - Record counts (non-zero for critical tables)
     - Null values in required fields
     - Duplicate primary keys
-    - Referential integrity
-    - Date consistency
+    - Referential integrity between tables
+    - Valid status values
+    - Data freshness
     
     Raises exception if checks fail (for Airflow task failure handling).
     """
@@ -42,183 +44,78 @@ def check_data_quality():
     
     try:
         engine = create_db_engine()
-        issues_found = []
         
-        with engine.connect() as conn:
-            # ============================================================
-            # 1. RECORD COUNT CHECKS
-            # ============================================================
-            logger.info("\n1. Record Count Validation")
-            logger.info("-" * 60)
+        # Build the quality check suite using fluent interface
+        checker = DataQualityChecker(engine, "Warehouse Quality Suite")
+        
+        # Configure all expectations
+        result = (checker
+            # Row count checks - ensure data was loaded
+            .expect_row_count("user_events", min_count=1)
+            .expect_row_count("user_profiles", min_count=1)
+            .expect_row_count("subscriptions", min_count=1)
+            .expect_row_count("transactions", min_count=1)
             
-            result = conn.execute(text("SELECT COUNT(*) FROM user_events"))
-            event_count = result.scalar()
-            logger.info(f"✓ User events: {event_count:,}")
-            if event_count == 0:
-                issues_found.append("No user events found in warehouse")
+            # Null checks - critical fields must have values
+            .expect_no_nulls("user_events", ["event_id", "user_id", "timestamp"])
+            .expect_no_nulls("user_profiles", ["user_id", "email"])
+            .expect_no_nulls("subscriptions", ["subscription_id", "user_id"])
+            .expect_no_nulls("transactions", ["transaction_id", "subscription_id"])
             
-            result = conn.execute(text("SELECT COUNT(*) FROM subscriptions"))
-            sub_count = result.scalar()
-            logger.info(f"✓ Subscriptions: {sub_count:,}")
+            # Uniqueness checks - primary keys must be unique
+            .expect_unique("user_events", ["event_id"])
+            .expect_unique("user_profiles", ["user_id"])
+            .expect_unique("subscriptions", ["subscription_id"])
+            .expect_unique("transactions", ["transaction_id"])
             
-            result = conn.execute(text("SELECT COUNT(*) FROM transactions"))
-            trans_count = result.scalar()
-            logger.info(f"✓ Transactions: {trans_count:,}")
+            # Referential integrity - foreign keys must exist
+            .expect_referential_integrity(
+                "subscriptions", "user_id",
+                "user_profiles", "user_id"
+            )
+            .expect_referential_integrity(
+                "transactions", "subscription_id",
+                "subscriptions", "subscription_id"
+            )
+            .expect_referential_integrity(
+                "user_events", "user_id",
+                "user_profiles", "user_id"
+            )
             
-            result = conn.execute(text("SELECT COUNT(*) FROM user_profiles"))
-            profile_count = result.scalar()
-            logger.info(f"✓ User profiles: {profile_count:,}")
-            if profile_count == 0:
-                issues_found.append("No user profiles found in warehouse")
+            # Valid values - statuses must be from allowed set
+            .expect_values_in_set(
+                "subscriptions", "status",
+                ["active", "cancelled", "expired", "trial"]
+            )
             
-            # ============================================================
-            # 2. NULL VALUE CHECKS
-            # ============================================================
-            logger.info("\n2. Null Value Validation")
-            logger.info("-" * 60)
+            # Freshness - data should be recent
+            .expect_freshness("user_events", "ingested_at", max_age_hours=48)
             
-            # Check user_events required fields
-            result = conn.execute(text("""
-                SELECT 
-                    COUNT(*) FILTER (WHERE event_id IS NULL) as null_event_ids,
-                    COUNT(*) FILTER (WHERE user_id IS NULL) as null_user_ids,
-                    COUNT(*) FILTER (WHERE timestamp IS NULL) as null_timestamps
-                FROM user_events
-            """))
-            row = result.fetchone()
-            if row[0] > 0 or row[1] > 0 or row[2] > 0:
-                issues_found.append(f"user_events has nulls: event_id={row[0]}, user_id={row[1]}, timestamp={row[2]}")
+            # Run all checks
+            .run()
+        )
+        
+        # Print the summary report
+        print(result.summary())
+        
+        # Log individual results
+        for check_result in result.results:
+            if check_result.passed:
+                logger.info(str(check_result))
+            elif check_result.severity == "warning":
+                logger.warning(str(check_result))
             else:
-                logger.info("✓ user_events: No nulls in required fields")
-            
-            # Check subscriptions required fields
-            result = conn.execute(text("""
-                SELECT COUNT(*) FILTER (WHERE subscription_id IS NULL OR updated_at IS NULL)
-                FROM subscriptions
-            """))
-            null_count = result.scalar()
-            if null_count > 0:
-                issues_found.append(f"subscriptions has {null_count} rows with null required fields")
-            else:
-                logger.info("✓ subscriptions: No nulls in required fields")
-            
-            # ============================================================
-            # 3. DUPLICATE CHECKS
-            # ============================================================
-            logger.info("\n3. Duplicate Validation")
-            logger.info("-" * 60)
-            
-            result = conn.execute(text("""
-                SELECT event_id, COUNT(*) as cnt
-                FROM user_events
-                GROUP BY event_id
-                HAVING COUNT(*) > 1
-                LIMIT 5
-            """))
-            duplicates = result.fetchall()
-            if duplicates:
-                issues_found.append(f"Found {len(duplicates)} duplicate event_ids")
-                for dup in duplicates[:3]:
-                    logger.warning(f"  Duplicate event_id: {dup[0]} appears {dup[1]} times")
-            else:
-                logger.info("✓ user_events: No duplicate event_ids")
-            
-            # ============================================================
-            # 4. REFERENTIAL INTEGRITY CHECKS
-            # ============================================================
-            logger.info("\n4. Referential Integrity Validation")
-            logger.info("-" * 60)
-            
-            # Check if subscription user_ids exist in user_profiles
-            # Clean up orphaned subscriptions (from previous data generations)
-            result = conn.execute(text("""
-                SELECT COUNT(DISTINCT s.user_id)
-                FROM subscriptions s
-                LEFT JOIN user_profiles up ON s.user_id = up.user_id
-                WHERE up.user_id IS NULL
-            """))
-            orphaned = result.scalar()
-            if orphaned > 0:
-                # Delete orphaned subscriptions to maintain referential integrity
-                logger.warning(f"⚠ Found {orphaned} subscriptions with user_ids not in user_profiles - cleaning up...")
-                cleanup_result = conn.execute(text("""
-                    DELETE FROM subscriptions
-                    WHERE user_id NOT IN (SELECT user_id FROM user_profiles)
-                """))
-                deleted_count = cleanup_result.rowcount
-                conn.commit()
-                logger.info(f"✓ Cleaned up {deleted_count} orphaned subscriptions")
-            else:
-                logger.info("✓ subscriptions: All user_ids exist in user_profiles")
-            
-            # Check if transaction subscription_ids exist
-            # Clean up orphaned transactions (from deleted subscriptions)
-            result = conn.execute(text("""
-                SELECT COUNT(DISTINCT t.subscription_id)
-                FROM transactions t
-                LEFT JOIN subscriptions s ON t.subscription_id = s.subscription_id
-                WHERE s.subscription_id IS NULL
-            """))
-            orphaned = result.scalar()
-            if orphaned > 0:
-                # Delete orphaned transactions to maintain referential integrity
-                logger.warning(f"⚠ Found {orphaned} transactions with invalid subscription_ids - cleaning up...")
-                cleanup_result = conn.execute(text("""
-                    DELETE FROM transactions
-                    WHERE subscription_id NOT IN (SELECT subscription_id FROM subscriptions)
-                """))
-                deleted_count = cleanup_result.rowcount
-                conn.commit()
-                logger.info(f"✓ Cleaned up {deleted_count} orphaned transactions")
-            else:
-                logger.info("✓ transactions: All subscription_ids exist")
-            
-            # ============================================================
-            # 5. DATE CONSISTENCY CHECKS
-            # ============================================================
-            logger.info("\n5. Date Consistency Validation")
-            logger.info("-" * 60)
-            
-            result = conn.execute(text("""
-                SELECT COUNT(*)
-                FROM subscriptions
-                WHERE end_date IS NOT NULL AND end_date < start_date
-            """))
-            invalid_dates = result.scalar()
-            if invalid_dates > 0:
-                issues_found.append(f"Found {invalid_dates} subscriptions with end_date < start_date")
-            else:
-                logger.info("✓ subscriptions: All dates are consistent")
-            
-            # ============================================================
-            # 6. DATA FRESHNESS CHECK
-            # ============================================================
-            logger.info("\n6. Data Freshness Check")
-            logger.info("-" * 60)
-            
-            result = conn.execute(text("""
-                SELECT MAX(ingested_at) as latest_ingestion
-                FROM user_events
-            """))
-            latest = result.scalar()
-            if latest:
-                logger.info(f"✓ Latest data ingestion: {latest}")
-            else:
-                logger.warning("⚠ No ingestion timestamps found")
-            
-            # ============================================================
-            # SUMMARY
-            # ============================================================
-            logger.info("\n" + "=" * 60)
-            if issues_found:
-                logger.error("Data Quality Check FAILED")
-                logger.error("Issues found:")
-                for issue in issues_found:
-                    logger.error(f"  - {issue}")
-                raise ValueError(f"Data quality checks failed: {len(issues_found)} issue(s) found")
-            else:
-                logger.info("✓ All Data Quality Checks PASSED")
-                logger.info("=" * 60)
+                logger.error(str(check_result))
+        
+        # Raise if any critical checks failed
+        if not result.success:
+            raise ValueError(
+                f"Data quality checks failed: {result.failed_checks} error(s), "
+                f"{result.warning_checks} warning(s)"
+            )
+        
+        logger.info("All data quality checks passed!")
+        return result
             
     except Exception as e:
         logger.error(f"Data quality check failed: {e}")

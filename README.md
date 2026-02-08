@@ -1,166 +1,171 @@
-# Production-Style Analytics Pipeline
+# B2B SaaS Analytics Pipeline
 
-A production-ready ETL pipeline for any SaaS company, implementing modern data engineering practices.
+A complete data engineering project that transforms raw operational data into business intelligence for a B2B SaaS company.
 
-## Project Overview
+## What This Project Does
 
-This project implements a complete analytics pipeline for a SaaS company, processing user events, subscription data, and business metrics. It includes:
+This pipeline processes four core data streams that every SaaS company generates:
 
-- **ETL/ELT Pipeline**: Extract, Transform, Load processes
-- **Data Orchestration**: Workflow management with Apache Airflow
-- **Data Warehousing**: Structured data storage and modeling
-- **Data Quality**: Validation, monitoring, and error handling
-- **Infrastructure as Code**: Docker containerization
-- **Production Best Practices**: Logging, monitoring, testing, documentation
+| Data Source | Business Question It Answers |
+|-------------|------------------------------|
+| **User Events** | What are customers actually doing in our product? |
+| **User Profiles** | Who are our customers and how do we segment them? |
+| **Subscriptions** | What's our MRR and who's at risk of churning? |
+| **Transactions** | Is revenue being collected correctly? |
+
+The pipeline extracts this data, validates it for quality, transforms it into analysis-ready tables, and loads it into a PostgreSQL data warehouse.
 
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
-│   Sources   │ --> │  ETL Layer   │ --> │ Data Lake   │ --> │ Data Warehouse│
-│  (Simulated)│     │  (Python)    │     │  (S3/Parquet)│     │  (PostgreSQL)│
-└─────────────┘     └──────────────┘     └─────────────┘     └──────────────┘
+Raw Data (JSON)     ETL Pipeline (Python)     Data Warehouse (PostgreSQL)
+     │                      │                          │
+     ▼                      ▼                          ▼
+┌──────────┐         ┌──────────────┐           ┌──────────────┐
+│ accounts │─────────│   Extract    │           │ dim_account  │
+│ users    │         │   Validate   │──────────▶│ dim_plan     │
+│ events   │─────────│   Transform  │           │ dim_date     │
+│ subs     │         │   Load       │           │ fact_*       │
+└──────────┘         └──────────────┘           └──────────────┘
                             │
                             ▼
-                    ┌──────────────┐
-                    │ Orchestration│
-                    │   (Airflow)  │
-                    └──────────────┘
+                     ┌──────────────┐
+                     │   Airflow    │
+                     │  (Schedule)  │
+                     └──────────────┘
+```
+
+## Key Design Decisions
+
+**Why these choices?** See [docs/design_decisions.md](docs/design_decisions.md) for detailed trade-off analysis.
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Warehouse | PostgreSQL | ACID compliance for financial data, free, scales to millions of rows |
+| Processing | Batch (hourly/daily) | SaaS metrics are inherently batch; simpler than streaming |
+| Modeling | Kimball Star Schema | Optimized for BI queries, business users understand it |
+| Orchestration | Apache Airflow | Industry standard, handles dependencies and retries |
+| Quality | Custom framework | Lightweight, inspired by Great Expectations patterns |
+
+## Data Model
+
+The warehouse uses dimensional modeling for analytics:
+
+**Dimensions (the "who/what/when"):**
+- `dim_account` - B2B companies (the paying entity)
+- `dim_plan` - Subscription tiers (Free, Basic, Pro, Enterprise)
+- `dim_date` - Pre-populated calendar for time intelligence
+
+**Facts (the "how much/how many"):**
+- `fact_subscription_daily` - Daily snapshot of subscription state and MRR
+- `fact_user_events` - Individual user interactions
+
+See [models/](models/) for SQL definitions with comments explaining each table.
+
+## Quick Start
+
+### Prerequisites
+- Python 3.9+
+- Docker & Docker Compose
+
+### Setup
+
+```bash
+# 1. Clone and set up
+cd "building ETL pipeline"
+python -m venv venv
+venv\Scripts\activate  # Windows
+pip install -r requirements.txt
+
+# 2. Configure environment
+cp .env.example .env
+
+# 3. Start PostgreSQL
+docker-compose up -d
+
+# 4. Initialize database and generate sample data
+python scripts/setup_db.py
+python scripts/generate_data.py
+
+# 5. Run the pipeline
+python src/main.py
+
+# 6. Validate data quality
+python scripts/data_quality_check.py
 ```
 
 ## Project Structure
 
 ```
-.
-├── README.md
-├── requirements.txt
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-│
-├── data/
-│   ├── raw/              # Raw extracted data
-│   ├── processed/        # Transformed data
-│   └── warehouse/        # Final warehouse tables
-│
 ├── src/
-│   ├── extract/          # Data extraction modules
-│   ├── transform/        # Data transformation logic
-│   ├── load/             # Data loading modules
-│   ├── models/           # Data models and schemas
-│   └── utils/            # Utility functions
+│   ├── extract/          # Data extraction from JSON files
+│   ├── transform/        # Business logic transformations
+│   ├── load/             # Database loading with upsert logic
+│   ├── data_quality/     # Quality check framework
+│   ├── models/           # Python dataclasses for schemas
+│   └── main.py           # Pipeline orchestrator
 │
-├── dags/                 # Airflow DAGs
-│   └── etl_pipeline.py
+├── models/               # SQL dimensional model definitions
+│   ├── dim_account.sql
+│   ├── dim_plan.sql
+│   ├── dim_date.sql
+│   ├── fact_subscriptions.sql
+│   └── fact_user_events.sql
 │
-├── tests/                # Unit and integration tests
-│
-├── scripts/
-│   ├── generate_data.py  # Generate synthetic SaaS data
-│   └── setup_db.py       # Database initialization
-│
-├── monitoring/
-│   └── logs/             # Pipeline logs
-│
-└── docs/                 # Documentation
-    ├── architecture.md
-    ├── data_models.md
-    └── getting_started.md
+├── dags/                 # Airflow DAG definitions
+├── scripts/              # Setup and utility scripts
+├── docs/                 # Design documentation
+│   ├── business_context.md
+│   └── design_decisions.md
+└── data/                 # Raw and processed data files
 ```
 
-## Quick Start
+## Data Quality Framework
 
-### Prerequisites
+The pipeline includes a reusable quality framework (`src/data_quality/`) that validates:
 
-- Python 3.9+
-- Docker & Docker Compose
-- Git
+- **Completeness**: Row counts meet minimums
+- **Validity**: No nulls in required fields
+- **Uniqueness**: Primary keys are unique
+- **Integrity**: Foreign keys reference valid records
+- **Freshness**: Data was loaded recently
 
-### Setup
+Example usage:
 
-1. **Clone and navigate to the project**
-   ```bash
-   cd "building ETL pipeline"
-   ```
+```python
+from src.data_quality import DataQualityChecker
 
-2. **Create virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+result = (DataQualityChecker(engine, "My Suite")
+    .expect_row_count("user_events", min_count=1000)
+    .expect_no_nulls("subscriptions", ["subscription_id", "user_id"])
+    .expect_unique("transactions", ["transaction_id"])
+    .run())
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
+if not result.success:
+    raise ValueError(result.summary())
+```
 
-4. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
+## Business Context
 
-5. **Start services with Docker Compose**
-   ```bash
-   docker-compose up -d
-   ```
+This platform is designed to answer core B2B SaaS questions:
 
-6. **Initialize database schema**
-   ```bash
-   python scripts/setup_db.py
-   ```
+- **What's our MRR?** → Query `fact_subscription_daily`
+- **Which accounts are churning?** → Filter by `is_churned` flag
+- **What features do retained customers use?** → Join events to non-churned accounts
+- **How long until trials convert?** → Calculate `days_since_signup`
 
-7. **Generate sample data**
-   ```bash
-   python scripts/generate_data.py
-   ```
-
-8. **Run ETL pipeline**
-   ```bash
-   python src/main.py
-   ```
-
-## Data Sources
-
-- **User Events**: Page views, clicks, feature usage
-- **Subscriptions**: Plan changes, renewals, cancellations
-- **Transactions**: Payments, refunds, upgrades
-- **User Profiles**: Demographics, account creation, updates
+See [docs/business_context.md](docs/business_context.md) for metric definitions and example queries.
 
 ## Tech Stack
 
-- **Language**: Python 3.9+
-- **Orchestration**: Apache Airflow
-- **Data Processing**: Pandas, PySpark (optional)
-- **Database**: PostgreSQL
-- **Storage**: Local filesystem (S3-compatible for production)
-- **Containerization**: Docker
-- **Testing**: pytest
-- **Monitoring**: Logging, Airflow monitoring
-
-## Features
-
-- Incremental data processing
-- Data quality checks and validation
-- Error handling and retry logic
-- Logging and monitoring
-- Scalable architecture
-- Documentation and testing
-
-## Technical Implementation
-
-This project implements:
-- Production-grade ETL pipeline design
-- Data modeling and schema design
-- Workflow orchestration
-- Error handling and data quality
-- Infrastructure setup
-- Best practices for data engineering
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.9+ |
+| Database | PostgreSQL 13+ |
+| Orchestration | Apache Airflow 2.x |
+| Data Processing | pandas |
+| Containerization | Docker, Docker Compose |
 
 ## License
 
 MIT License
-
-## Contributing
-
-Suggestions and improvements are welcome.
