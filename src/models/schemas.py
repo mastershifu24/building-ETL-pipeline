@@ -187,6 +187,21 @@ WAREHOUSE_SCHEMAS = {
         CREATE INDEX IF NOT EXISTS idx_user_events_timestamp ON user_events(timestamp);
         CREATE INDEX IF NOT EXISTS idx_user_events_event_type ON user_events(event_type);
     """,
+
+    'staging_user_events': """
+        CREATE TABLE IF NOT EXISTS staging_user_events (
+            event_id VARCHAR(255),
+            user_id VARCHAR(255) NOT NULL,
+            event_type VARCHAR(100) NOT NULL,
+            timestamp TIMESTAMP NOT NULL,
+            properties JSONB,
+            session_id VARCHAR(255),
+            country VARCHAR(100),
+            signup_source VARCHAR(50),
+            company_size VARCHAR(50)
+        );
+        CREATE INDEX IF NOT EXISTS idx_staging_user_events_event_id ON staging_user_events(event_id);
+    """,
     
     'subscriptions': """
         CREATE TABLE IF NOT EXISTS subscriptions (

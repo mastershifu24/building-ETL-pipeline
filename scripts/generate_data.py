@@ -182,7 +182,7 @@ def generate_transactions(subscriptions: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(transactions)
 
 
-def generate_user_events(user_profiles: pd.DataFrame, num_events: int = 10000) -> pd.DataFrame:
+def generate_user_events(user_profiles: pd.DataFrame, num_events: int = 100000) -> pd.DataFrame:
     """Generate user event data."""
     print(f"Generating {num_events} user events...")
     
@@ -248,7 +248,7 @@ def main():
     user_profiles = generate_user_profiles(accounts, users_per_account=(1, 5))
     subscriptions = generate_subscriptions(user_profiles)
     transactions = generate_transactions(subscriptions)
-    user_events = generate_user_events(user_profiles, num_events=10000)
+    user_events = generate_user_events(user_profiles, num_events=100000)
     
     # Save to JSON files
     print("\nSaving data files...")

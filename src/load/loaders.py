@@ -7,7 +7,9 @@ data warehouse with support for append and replace operations.
 
 import pandas as pd
 from sqlalchemy.engine import Engine
+from sqlalchemy import text
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +137,63 @@ def load_user_events(df: pd.DataFrame, engine: Engine) -> int:
     Returns:
         Number of rows loaded
     """
-    return load_to_warehouse(df, 'user_events', engine, primary_key_col='event_id')
+    if df.empty:
+        logger.warning("No user events to load")
+        return 0
+
+    working_df = df.copy()
+
+    # Ensure properties is JSON-serializable text before CASTing to JSONB in SQL.
+    if 'properties' in working_df.columns:
+        working_df['properties'] = working_df['properties'].apply(
+            lambda value: json.dumps(value) if isinstance(value, dict) else value
+        )
+
+    rows_loaded = len(working_df)
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE staging_user_events"))
+
+        working_df.to_sql(
+            'staging_user_events',
+            engine,
+            if_exists='append',
+            index=False,
+            method='multi',
+            chunksize=1000
+        )
+
+        merge_sql = text("""
+            INSERT INTO user_events (
+                event_id, user_id, event_type, timestamp,
+                properties, session_id, country, signup_source, company_size
+            )
+            SELECT
+                event_id, user_id, event_type, timestamp,
+                properties::jsonb, session_id, country, signup_source, company_size
+            FROM staging_user_events
+            ON CONFLICT (event_id) DO UPDATE
+            SET
+                user_id = EXCLUDED.user_id,
+                event_type = EXCLUDED.event_type,
+                timestamp = EXCLUDED.timestamp,
+                properties = EXCLUDED.properties,
+                session_id = EXCLUDED.session_id,
+                country = EXCLUDED.country,
+                signup_source = EXCLUDED.signup_source,
+                company_size = EXCLUDED.company_size
+        """)
+
+        with engine.begin() as conn:
+            conn.execute(merge_sql)
+            conn.execute(text("TRUNCATE TABLE staging_user_events"))
+
+        logger.info(f"Loaded {rows_loaded} user events via staging merge")
+        return rows_loaded
+    except Exception as e:
+        logger.error(f"Error loading user events via staging: {e}")
+        raise
 
 
 def load_subscriptions(df: pd.DataFrame, engine: Engine) -> int:
