@@ -1,0 +1,41 @@
+name: ETL to Neon
+
+on:
+  # Daily at 6:00 AM UTC — adjust as needed
+  schedule:
+    - cron: '0 6 * * *'
+  # Manual run from GitHub → Actions → "Run workflow"
+  workflow_dispatch:
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Initialize warehouse schema
+        run: python scripts/setup_db.py
+
+      # Free-tier Neon: use small dataset in CI (not 1M rows)
+      - name: Generate sample data
+        run: python scripts/generate_data.py --small
+
+      - name: Run ETL pipeline
+        run: python src/main.py
+
+      - name: Data quality checks
+        run: python scripts/data_quality_check.py

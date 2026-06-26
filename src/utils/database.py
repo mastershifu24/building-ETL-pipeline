@@ -15,22 +15,25 @@ def get_db_connection_string() -> str:
     """
     Construct database connection string from environment variables.
     
-    Reads database configuration from environment variables with defaults
-    for local development. In Docker, POSTGRES_HOST should be 'postgres' (service name).
+    Reads DATABASE_URL first (Neon / cloud), then POSTGRES_* vars for local/Docker.
+    In Docker, POSTGRES_HOST should be 'postgres' (service name).
     
     Returns:
         SQLAlchemy PostgreSQL connection string in format:
         postgresql://user:password@host:port/database
     """
-    # Check if running in Docker (Airflow sets POSTGRES_HOST=postgres)
-    # Otherwise use localhost for local development
+    database_url = os.getenv('DATABASE_URL')
+    if database_url:
+        # Neon and other hosts provide a full URL (often with sslmode=require)
+        logger.info("Connecting via DATABASE_URL")
+        return database_url
+
     host = os.getenv('POSTGRES_HOST', 'localhost')
     port = os.getenv('POSTGRES_PORT', '5432')
     database = os.getenv('POSTGRES_DB', 'saas_analytics')
     user = os.getenv('POSTGRES_USER', 'postgres')
     password = os.getenv('POSTGRES_PASSWORD', 'postgres')
     
-    # Log connection details (without password) for debugging
     logger.info(f"Connecting to database: {user}@{host}:{port}/{database}")
     
     return f"postgresql://{user}:{password}@{host}:{port}/{database}"
