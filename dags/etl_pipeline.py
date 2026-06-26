@@ -66,7 +66,12 @@ check_data = BashOperator(
     ls -la "$DATA_PATH" || echo "Directory does not exist"
     # Check that all four required files exist
     # If any file is missing, exit with code 1 (failure)
-    if [ -f "$DATA_PATH/user_events.json" ] && \
+    if [ -f "$DATA_PATH/user_events.parquet" ] || [ -f "$DATA_PATH/user_events.json" ]; then
+        EVENTS_OK=1
+    else
+        EVENTS_OK=0
+    fi
+    if [ "$EVENTS_OK" -eq 1 ] && \
        [ -f "$DATA_PATH/subscriptions.json" ] && \
        [ -f "$DATA_PATH/transactions.json" ] && \
        [ -f "$DATA_PATH/user_profiles.json" ]; then

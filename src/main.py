@@ -3,6 +3,9 @@ Main ETL pipeline entry point.
 
 Orchestrates the complete ETL process: extraction from source files,
 transformation and cleaning, and loading into the data warehouse.
+
+User events are processed in chunks when sourced from Parquet so the
+pipeline can handle 1M+ rows without loading everything into memory.
 """
 
 import os
@@ -21,10 +24,11 @@ load_dotenv(dotenv_path=project_root / '.env', override=False)
 from src.utils.logger import setup_logger
 from src.utils.database import create_db_engine
 from src.extract.extractors import (
-    extract_user_events,
     extract_subscriptions,
     extract_transactions,
-    extract_user_profiles
+    extract_user_profiles,
+    iter_user_events_chunks,
+    resolve_user_events_path,
 )
 from src.transform.transformers import (
     clean_user_events,
@@ -48,17 +52,60 @@ logger = setup_logger(
 )
 
 
+def _resolve_data_raw_path() -> str:
+    env_data_path = os.getenv('DATA_RAW_PATH')
+    if env_data_path:
+        env_path = Path(env_data_path)
+        if not env_path.is_absolute():
+            return str(project_root / env_data_path)
+        return env_data_path
+    return str(project_root / 'data' / 'raw')
+
+
+def _load_user_events_chunked(
+    data_raw_path: str,
+    user_profiles_clean,
+    engine,
+    chunk_size: int
+) -> int:
+    """
+    Transform and load user events in chunks.
+
+    Each chunk follows: extract chunk -> clean -> enrich -> staging upsert.
+    """
+    events_path = resolve_user_events_path(data_raw_path)
+    total_loaded = 0
+    chunk_number = 0
+
+    logger.info(
+        f"Processing user events from {events_path} in chunks of {chunk_size:,}"
+    )
+
+    for events_chunk in iter_user_events_chunks(str(events_path), chunk_size=chunk_size):
+        chunk_number += 1
+        logger.info(f"User events chunk {chunk_number}: {len(events_chunk):,} rows")
+
+        events_clean = clean_user_events(events_chunk)
+        events_enriched = enrich_user_events(events_clean, user_profiles_clean)
+        total_loaded += load_user_events(events_enriched, engine)
+
+    if chunk_number == 0:
+        logger.warning("No user events found to process")
+
+    return total_loaded
+
+
 def run_etl_pipeline() -> None:
     """
     Run the complete ETL pipeline.
     
     This function orchestrates the three main phases of an ETL pipeline:
-    1. EXTRACT: Read data from source files (JSON)
+    1. EXTRACT: Read data from source files (JSON/Parquet)
     2. TRANSFORM: Clean, validate, and enrich the data
     3. LOAD: Write the processed data to the PostgreSQL data warehouse
     
     The pipeline processes four main data types:
-    - User Events: User interactions and feature usage
+    - User Events: User interactions and feature usage (chunked at scale)
     - Subscriptions: Customer subscription information
     - Transactions: Payment and billing records
     - User Profiles: User demographic and account data
@@ -70,96 +117,62 @@ def run_etl_pipeline() -> None:
     logger.info("=" * 60)
     
     try:
-        # ============================================================
-        # SETUP: Initialize database connection and configure paths
-        # ============================================================
-        # Create a connection to PostgreSQL using SQLAlchemy engine
-        # This engine handles connection pooling and SQL execution
         engine = create_db_engine()
-        
-        # Determine where source data files are located
-        # Supports both environment variable override and default location
-        project_root = Path(__file__).parent.parent
-        env_data_path = os.getenv('DATA_RAW_PATH')
-        if env_data_path:
-            # If env var is set and is relative, make it relative to project root
-            env_path = Path(env_data_path)
-            if not env_path.is_absolute():
-                data_raw_path = str(project_root / env_data_path)
-            else:
-                data_raw_path = env_data_path
-        else:
-            data_raw_path = str(project_root / 'data' / 'raw')
-        
-        # Debug: log the path being used
+        data_raw_path = _resolve_data_raw_path()
+        chunk_size = int(os.getenv('ETL_CHUNK_SIZE', '50000'))
+
         logger.info(f"Data raw path: {data_raw_path}")
         logger.info(f"Path exists: {Path(data_raw_path).exists()}")
         if Path(data_raw_path).exists():
-            logger.info(f"Files in directory: {list(Path(data_raw_path).glob('*.json'))}")
-        
+            logger.info(
+                f"Files in directory: {list(Path(data_raw_path).glob('*events*'))}"
+            )
+
         # ============================================================
-        # PHASE 1: EXTRACT - Read data from source files
+        # PHASE 1: EXTRACT - dimension tables (small, load whole file)
         # ============================================================
-        # Extract raw data from JSON files into pandas DataFrames
-        # Each extractor function reads a specific file and returns a DataFrame
         logger.info("\nEXTRACT PHASE")
         logger.info("-" * 60)
-        
-        user_events_raw = extract_user_events(f"{data_raw_path}/user_events.json")
+
         subscriptions_raw = extract_subscriptions(f"{data_raw_path}/subscriptions.json")
         transactions_raw = extract_transactions(f"{data_raw_path}/transactions.json")
         user_profiles_raw = extract_user_profiles(f"{data_raw_path}/user_profiles.json")
-        
+
         # ============================================================
-        # PHASE 2: TRANSFORM - Clean, validate, and enrich data
+        # PHASE 2: TRANSFORM - dimension tables
         # ============================================================
-        # Clean each dataset:
-        # - Convert data types (e.g., strings to dates)
-        # - Remove duplicates
-        # - Handle missing values
-        # - Validate required fields
-        # - Standardize formats (e.g., lowercase event types)
         logger.info("\nTRANSFORM PHASE")
         logger.info("-" * 60)
-        
-        user_events_clean = clean_user_events(user_events_raw)
+
         subscriptions_clean = clean_subscriptions(subscriptions_raw)
         transactions_clean = clean_transactions(transactions_raw)
         user_profiles_clean = clean_user_profiles(user_profiles_raw)
-        
-        # Enrichment: Add user profile data to events for better analytics
-        # This joins user demographic data (country, signup_source, company_size)
-        # to each event, enabling richer analysis later
-        user_events_enriched = enrich_user_events(user_events_clean, user_profiles_clean)
-        
+
         # ============================================================
-        # PHASE 3: LOAD - Write data to data warehouse
+        # PHASE 3: LOAD
         # ============================================================
-        # Load each cleaned dataset into PostgreSQL tables
-        # The loaders handle:
-        # - Checking for existing records (to avoid duplicates)
-        # - Batch inserts for performance
-        # - Error handling and logging
         logger.info("\nLOAD PHASE")
         logger.info("-" * 60)
-        
+
         rows_loaded = {
             'user_profiles': load_user_profiles(user_profiles_clean, engine),
             'subscriptions': load_subscriptions(subscriptions_clean, engine),
             'transactions': load_transactions(transactions_clean, engine),
-            'user_events': load_user_events(user_events_enriched, engine)
+            'user_events': _load_user_events_chunked(
+                data_raw_path,
+                user_profiles_clean,
+                engine,
+                chunk_size
+            ),
         }
-        
-        # ============================================================
-        # SUMMARY: Report results
-        # ============================================================
+
         logger.info("\n" + "=" * 60)
         logger.info("ETL Pipeline Complete")
         logger.info("=" * 60)
         logger.info("\nRows loaded:")
         for table, count in rows_loaded.items():
             logger.info(f"  - {table}: {count:,} rows")
-        
+
         logger.info("\nPipeline execution completed successfully.")
         
     except Exception as e:

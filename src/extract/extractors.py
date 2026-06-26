@@ -9,8 +9,13 @@ import json
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Iterator, Optional
 import logging
+
+try:
+    import pyarrow.parquet as pq
+except ImportError:  # pragma: no cover - optional at import time
+    pq = None
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +147,73 @@ class IncrementalExtractor(FileExtractor):
         return df
 
 
+def resolve_user_events_path(data_dir: str) -> Path:
+    """
+    Pick the best user events source file in a directory.
+
+    Parquet is preferred for large datasets; JSON is the fallback for small dev runs.
+    """
+    data_path = Path(data_dir)
+    parquet_path = data_path / 'user_events.parquet'
+    json_path = data_path / 'user_events.json'
+
+    if parquet_path.exists():
+        return parquet_path
+    if json_path.exists():
+        return json_path
+
+    return json_path
+
+
+def _filter_events_since(df: pd.DataFrame, since: Optional[datetime]) -> pd.DataFrame:
+    if since and 'timestamp' in df.columns:
+        df = df.copy()
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df = df[df['timestamp'] > since]
+        logger.info(f"Filtered to {len(df)} records since {since}")
+    return df
+
+
+def iter_user_events_chunks(
+    data_path: str,
+    chunk_size: int = 50_000,
+    since: Optional[datetime] = None
+) -> Iterator[pd.DataFrame]:
+    """
+    Yield user events in chunks for memory-efficient processing.
+
+    Supports Parquet (preferred at scale) and JSON (small datasets).
+    """
+    path = Path(data_path)
+
+    if not path.exists():
+        logger.warning(f"User events file not found: {path}")
+        return
+
+    if path.suffix == '.parquet':
+        if pq is None:
+            raise ImportError("pyarrow is required to read Parquet files. pip install pyarrow")
+
+        parquet_file = pq.ParquetFile(path)
+        for batch in parquet_file.iter_batches(batch_size=chunk_size):
+            chunk = batch.to_pandas()
+            chunk = _filter_events_since(chunk, since)
+            if not chunk.empty:
+                logger.info(f"Extracted chunk of {len(chunk)} user events from {path}")
+                yield chunk
+        return
+
+    extractor = IncrementalExtractor(str(path))
+    df = extractor.extract(since=since)
+    if df.empty:
+        return
+
+    for start in range(0, len(df), chunk_size):
+        chunk = df.iloc[start:start + chunk_size]
+        logger.info(f"Extracted chunk of {len(chunk)} user events from {path}")
+        yield chunk
+
+
 def extract_user_events(data_path: str, since: Optional[datetime] = None) -> pd.DataFrame:
     """
     Extract user events data.
@@ -153,7 +225,17 @@ def extract_user_events(data_path: str, since: Optional[datetime] = None) -> pd.
     Returns:
         DataFrame with user events
     """
-    extractor = IncrementalExtractor(data_path)
+    path = Path(data_path)
+    if path.is_dir():
+        path = resolve_user_events_path(str(path))
+
+    if path.suffix == '.parquet':
+        chunks = list(iter_user_events_chunks(str(path), chunk_size=500_000, since=since))
+        if not chunks:
+            return pd.DataFrame()
+        return pd.concat(chunks, ignore_index=True)
+
+    extractor = IncrementalExtractor(str(path))
     return extractor.extract(since=since)
 
 
