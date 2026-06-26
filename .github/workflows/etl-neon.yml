@@ -30,6 +30,10 @@ jobs:
       - name: Initialize warehouse schema
         run: python scripts/setup_db.py
 
+      # Clear stale rows (e.g. local 1M run) so --small + DQ checks stay consistent
+      - name: Reset warehouse data
+        run: python scripts/reset_warehouse.py
+
       # Free-tier Neon: use small dataset in CI (not 1M rows)
       - name: Generate sample data
         run: python scripts/generate_data.py --small
