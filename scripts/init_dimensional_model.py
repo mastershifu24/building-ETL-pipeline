@@ -16,6 +16,15 @@ load_dotenv(dotenv_path=project_root / '.env', override=True)
 
 from src.utils.database import create_db_engine
 from sqlalchemy import text
+import re
+
+
+def _strip_leading_line_comments(statement: str) -> str:
+    """Remove leading -- comment lines so seed INSERTs are not skipped."""
+    lines = statement.splitlines()
+    while lines and lines[0].strip().startswith('--'):
+        lines.pop(0)
+    return '\n'.join(lines).strip()
 
 
 def init_dimensional_model():
@@ -51,13 +60,13 @@ def init_dimensional_model():
         sql_content = filepath.read_text()
         
         # Remove block comments
-        import re
         sql_clean = re.sub(r'/\*.*?\*/', '', sql_content, flags=re.DOTALL)
         
         # Split by semicolon to handle multiple statements
         statements = [s.strip() for s in sql_clean.split(';') if s.strip()]
         
         for stmt in statements:
+            stmt = _strip_leading_line_comments(stmt)
             # Skip empty or comment-only statements
             if not stmt or stmt.startswith('--'):
                 continue
@@ -100,7 +109,7 @@ def init_dimensional_model():
     
     print("\n[DONE] Dimensional model initialized!")
     print("\nTo explore the tables, connect to PostgreSQL:")
-    print("  docker exec -it postgres_warehouse psql -U postgres -d saas_warehouse")
+    print("  docker exec -it saas_postgres psql -U postgres -d saas_analytics")
     print("\nThen run: \\dt to list tables, \\d table_name to see columns")
 
 
