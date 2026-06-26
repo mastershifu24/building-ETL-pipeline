@@ -8,7 +8,6 @@ Cloud:  deploy on Streamlit Community Cloud with DATABASE_URL in Secrets
 import os
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -21,6 +20,7 @@ st.set_page_config(
     page_title="SaaS Analytics",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 
@@ -66,13 +66,6 @@ def _resolve_database_url() -> str | None:
     return None
 
 
-def _connection_hint(database_url: str | None) -> str:
-    if not database_url:
-        return "DATABASE_URL not found — using local POSTGRES_* defaults (localhost)"
-    host = urlparse(database_url).hostname or "unknown"
-    return f"DATABASE_URL set (host: {host})"
-
-
 @st.cache_resource
 def get_engine():
     database_url = _resolve_database_url()
@@ -98,10 +91,6 @@ def main() -> None:
         "Live warehouse metrics from Neon · refreshed by "
         "[GitHub Actions ETL](https://github.com/mastershifu24/building-ETL-pipeline/actions)"
     )
-
-    database_url = _resolve_database_url()
-    with st.sidebar:
-        st.caption(_connection_hint(database_url))
 
     try:
         counts = query("""
