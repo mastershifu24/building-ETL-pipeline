@@ -8,6 +8,7 @@ Cloud:  deploy on Streamlit Community Cloud with DATABASE_URL in Secrets
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -23,27 +24,66 @@ st.set_page_config(
 )
 
 
-def _configure_database_url() -> None:
-    """Streamlit Cloud secrets take precedence over local .env."""
+def _clean_url(value: str) -> str:
+    return value.strip().strip('"').strip("'")
+
+
+def _resolve_database_url() -> str | None:
+    """
+    Resolve Neon connection string from Streamlit secrets, env, or local .env.
+
+    Streamlit Cloud secrets must be TOML, e.g.:
+        DATABASE_URL = "postgresql://user:pass@host/neondb?sslmode=require"
+    """
+    # 1. Streamlit secrets (cloud) — check before .env so cloud never hits localhost
     try:
-        if "DATABASE_URL" in st.secrets:
-            os.environ["DATABASE_URL"] = st.secrets["DATABASE_URL"]
-            return
+        secrets = st.secrets
+        for key in ("DATABASE_URL", "database_url"):
+            if key in secrets:
+                url = _clean_url(str(secrets[key]))
+                if url:
+                    return url
+        if "database" in secrets and "url" in secrets["database"]:
+            url = _clean_url(str(secrets["database"]["url"]))
+            if url:
+                return url
     except Exception:
         pass
 
+    # 2. Process environment (some hosts inject this directly)
+    url = _clean_url(os.environ.get("DATABASE_URL", ""))
+    if url:
+        return url
+
+    # 3. Local .env for development
     from dotenv import load_dotenv
 
     load_dotenv(ROOT / ".env")
+    url = _clean_url(os.environ.get("DATABASE_URL", ""))
+    if url:
+        return url
+
+    return None
 
 
-_configure_database_url()
-
-from src.utils.database import create_db_engine  # noqa: E402
+def _connection_hint(database_url: str | None) -> str:
+    if not database_url:
+        return "DATABASE_URL not found — using local POSTGRES_* defaults (localhost)"
+    host = urlparse(database_url).hostname or "unknown"
+    return f"DATABASE_URL set (host: {host})"
 
 
 @st.cache_resource
 def get_engine():
+    database_url = _resolve_database_url()
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL is not set. On Streamlit Cloud, open App settings → Secrets "
+            'and add: DATABASE_URL = "postgresql://..." then reboot the app.'
+        )
+    os.environ["DATABASE_URL"] = database_url
+    from src.utils.database import create_db_engine
+
     return create_db_engine()
 
 
@@ -59,6 +99,10 @@ def main() -> None:
         "[GitHub Actions ETL](https://github.com/mastershifu24/building-ETL-pipeline/actions)"
     )
 
+    database_url = _resolve_database_url()
+    with st.sidebar:
+        st.caption(_connection_hint(database_url))
+
     try:
         counts = query("""
             SELECT 'user_events' AS table_name, COUNT(*)::bigint AS count FROM user_events
@@ -69,7 +113,20 @@ def main() -> None:
         count_map = dict(zip(counts["table_name"], counts["count"]))
     except Exception as exc:
         st.error(f"Could not connect to the warehouse: {exc}")
-        st.info("Set `DATABASE_URL` in Streamlit Secrets or in a local `.env` file.")
+        st.markdown(
+            """
+**Streamlit Cloud fix** (App settings → Secrets). Paste exactly this format —
+include the `DATABASE_URL =` line, not just the URL:
+
+```toml
+DATABASE_URL = "postgresql://USER:PASSWORD@HOST/neondb?sslmode=require"
+```
+
+Then click **Save** → **Reboot app** (or Manage app → Restart).
+
+Use the same Neon pooled URL as your GitHub Actions secret.
+            """
+        )
         return
 
     mrr_row = query("""
