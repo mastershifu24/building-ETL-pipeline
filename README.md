@@ -2,7 +2,9 @@
 
 A production-style **ETL and analytics** project: raw operational data → validated transforms → **PostgreSQL** warehouse, **dimensional models**, **data quality** checks, and **Airflow** orchestration. Built to mirror how B2B SaaS teams model subscriptions, events, and revenue for reporting.
 
-**Stack:** Python · SQL · PostgreSQL · pandas · SQLAlchemy · Docker · Apache Airflow
+**Stack:** Python · SQL · PostgreSQL · Neon · pandas · SQLAlchemy · GitHub Actions · Streamlit · Docker · Apache Airflow
+
+**Live demo:** [Streamlit dashboard](https://share.streamlit.io) *(deploy via steps below)* · [GitHub Actions ETL](https://github.com/mastershifu24/building-ETL-pipeline/actions)
 
 ---
 
@@ -53,6 +55,33 @@ Raw Data (JSON)     ETL Pipeline (Python)     Data Warehouse (PostgreSQL)
 | Quality | Custom Python + SQL | Explicit checks; fail fast before dashboards trust bad data |
 
 More detail: [docs/design_decisions.md](docs/design_decisions.md)
+
+---
+
+## Dashboard (no local ETL needed)
+
+After [GitHub Actions](#cloud-etl-neon) loads data into Neon:
+
+```bash
+pip install -r requirements.txt
+streamlit run dashboard/app.py
+```
+
+**Streamlit Community Cloud** (free, always on):
+
+1. Push this repo to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io) → **Create app** → select this repo
+3. Main file path: `dashboard/app.py`
+4. **Advanced settings → Secrets** — paste your Neon `DATABASE_URL` (same as GitHub Actions secret)
+5. Deploy — you get a public URL like `https://your-app.streamlit.app`
+
+Data refreshes when the daily GitHub Actions workflow runs (or trigger it manually).
+
+---
+
+## Cloud ETL (Neon)
+
+Scheduled pipeline: [`.github/workflows/etl-neon.yml`](.github/workflows/etl-neon.yml) runs daily against Neon. Add repo secret `DATABASE_URL`, then **Actions → ETL to Neon → Run workflow**.
 
 ---
 
